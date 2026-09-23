@@ -1,5 +1,7 @@
+import io
 import os
 import tempfile
+import zipfile
 
 import streamlit as st
 from markitdown import MarkItDown
@@ -35,42 +37,99 @@ def convertir(nombre, contenido):
         os.remove(ruta)
 
 
+def nombre_md(nombre, usados):
+    base = os.path.splitext(nombre)[0] or "documento"
+    candidato, i = f"{base}.md", 2
+    while candidato in usados:
+        candidato, i = f"{base} ({i}).md", i + 1
+    usados.add(candidato)
+    return candidato
+
+
 st.set_page_config(page_title="MarkItDown", page_icon="📄", layout="wide")
 st.title("⬡ MarkItDown")
 st.caption("Convierte documentos a Markdown: PDF · DOCX · XLSX · PPTX · HTML · CSV · JSON · XML · TXT · ZIP · EPUB")
 
-archivo = st.file_uploader("📂 Subir archivo", type=EXTENSIONES)
+archivos = st.file_uploader(
+    "📂 Subir archivos (puedes seleccionar varios a la vez)",
+    type=EXTENSIONES,
+    accept_multiple_files=True,
+)
 
-if archivo is None:
-    st.info("👆 Sube un archivo para comenzar.")
+if not archivos:
+    st.info("👆 Sube uno o varios archivos para comenzar.")
     st.stop()
 
-contenido = archivo.getvalue()
-try:
-    with st.spinner("⏳ Convirtiendo…"):
+# ── Conversión de todos los archivos ──────────────────────────────────────────
+resultados, errores, usados = [], [], set()
+barra = st.progress(0.0, text="⏳ Convirtiendo…")
+for i, archivo in enumerate(archivos, start=1):
+    contenido = archivo.getvalue()
+    try:
         texto = convertir(archivo.name, contenido)
-except Exception as e:
-    st.error(f"❌ Error al convertir {archivo.name}: {e}")
+        resultados.append({
+            "origen": archivo.name,
+            "md": nombre_md(archivo.name, usados),
+            "texto": texto,
+            "tamano": len(contenido),
+        })
+    except Exception as e:
+        errores.append((archivo.name, str(e)))
+    barra.progress(i / len(archivos), text=f"⏳ Convirtiendo {i}/{len(archivos)}…")
+barra.empty()
+
+for nombre, err in errores:
+    st.error(f"❌ {nombre}: {err}")
+
+if not resultados:
     st.stop()
 
-base = os.path.splitext(archivo.name)[0] or "documento"
+st.success(f"✅ {len(resultados)} de {len(archivos)} archivos convertidos")
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Archivo", archivo.name)
-c2.metric("Tamaño", fmt_size(len(contenido)))
-c3.metric("Líneas", f"{len(texto.splitlines()):,}")
-c4.metric("Caracteres", f"{len(texto):,}")
+# ── Descarga de todo en ZIP ───────────────────────────────────────────────────
+buffer = io.BytesIO()
+with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+    for r in resultados:
+        zf.writestr(r["md"], r["texto"])
 
 st.download_button(
-    "💾 Descargar .md",
-    data=texto.encode("utf-8"),
-    file_name=f"{base}.md",
-    mime="text/markdown",
+    f"📦 Descargar todos ({len(resultados)}) en ZIP",
+    data=buffer.getvalue(),
+    file_name="markdown_convertidos.zip",
+    mime="application/zip",
     type="primary",
+)
+
+st.dataframe(
+    [
+        {
+            "Archivo": r["origen"],
+            "Markdown": r["md"],
+            "Tamaño": fmt_size(r["tamano"]),
+            "Líneas": len(r["texto"].splitlines()),
+            "Caracteres": len(r["texto"]),
+        }
+        for r in resultados
+    ],
+    width="stretch",
+    hide_index=True,
+)
+
+# ── Vista previa individual ───────────────────────────────────────────────────
+st.subheader("👁 Vista previa")
+elegido = st.selectbox(
+    "Archivo", resultados, format_func=lambda r: r["origen"], label_visibility="collapsed"
+)
+
+st.download_button(
+    f"💾 Descargar {elegido['md']}",
+    data=elegido["texto"].encode("utf-8"),
+    file_name=elegido["md"],
+    mime="text/markdown",
 )
 
 tab_raw, tab_render = st.tabs(["📄 Raw MD", "✨ Rendered"])
 with tab_raw:
-    st.code(texto, language="markdown")
+    st.code(elegido["texto"], language="markdown")
 with tab_render:
-    st.markdown(texto)
+    st.markdown(elegido["texto"])
