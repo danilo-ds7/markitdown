@@ -1,2 +1,6 @@
-markitdown[all]
-streamlit
+markitdown[all]==0.1.8
+streamlit==1.64.0
+magika==0.6.3
+onnxruntime==1.30.0
+numpy==2.5.3
+pandas==3.0.6
